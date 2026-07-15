@@ -125,11 +125,14 @@ app.post('/api/generate-cv', upload.single('photo'), async (req, res) => {
       templateId,
     };
 
-    res.status(200).json({ success: true, data: finalData });
-  } catch (error) {
+} catch (error) {
     console.error('❌ خطأ:', error);
-    res.status(500).json({ success: false, message: 'خطأ في الخادم' });
-  }
+    res.status(500).json({
+      success: false,
+      message: 'خطأ في الخادم',
+      details: error.message   // يُظهر سبب الخطأ للمطورين
+    });
+}
 });
 
 // جلب سيرة محفوظة
@@ -149,6 +152,11 @@ app.get('/api/portfolio/:id', (req, res) => {
     }
   });
 });
-
+// إنشاء مجلد uploads إذا لم يكن موجوداً
+const fs = require('fs');
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir);
+}
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 الخادم المحلي على ${PORT} مع SQLite`));
