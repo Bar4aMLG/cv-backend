@@ -3,65 +3,61 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');                 // مرة واحدة فقط
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Database = require('better-sqlite3');
 const { v4: uuidv4 } = require('uuid');
 
 dotenv.config();
-const fs = require('fs');
+
+const app = express();
+
+// CORS المعدل
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://bar4amlg.github.io',
+];
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
+app.use(express.json());
+
+// إنشاء مجلد uploads إن لم يكن موجوداً
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
+app.use('/uploads', express.static(uploadsDir));
 
-// إضافة نقطة فحص مؤقتة للمفتاح
-app.get('/check-key', (req, res) => {
-  res.json({ geminiKeyExists: !!process.env.GEMINI_API_KEY });
-});
-const app = express();
-    const allowedOrigins = [
-      'http://localhost:5173',                  // للتطوير المحلي
-      'https://bar4amlg.github.io',            // موقعك المنشور
-    ];
-
-    app.use(cors({
-      origin: function (origin, callback) {
-        // السماح للطلبات التي لا تحوي origin (مثل Postman) أو الموجود ضمن القائمة
-        if (!origin || allowedOrigins.includes(origin)) {
-          callback(null, true);
-        } else {
-          callback(new Error('Not allowed by CORS'));
-        }
-      },
-      credentials: true
-    }));
-app.use(express.json());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// --- إعداد قاعدة البيانات SQLite ---
-const db = new Database('cv_data.db'); // سينشئ ملف cv_data.db في مجلد المشروع
-db.pragma('journal_mode = WAL'); // لتحسين الأداء
+// قاعدة البيانات
+const db = new Database('cv_data.db');
+db.pragma('journal_mode = WAL');
 db.exec(`
   CREATE TABLE IF NOT EXISTS portfolios (
     id TEXT PRIMARY KEY,
     user_name TEXT NOT NULL,
-    skills TEXT,       -- سنخزن المهارات كمصفوفة JSON نصية
+    skills TEXT,
     bio TEXT,
-    projects TEXT,     -- سنخزن المشاريع كمصفوفة JSON نصية
+    projects TEXT,
     template_id TEXT,
     photo_url TEXT,
     created_at TEXT DEFAULT (datetime('now'))
   )
 `);
-
-// تجهيز استعلامات مُعدة مسبقاً لتسريع الأداء
 const insertStmt = db.prepare(`
   INSERT INTO portfolios (id, user_name, skills, bio, projects, template_id, photo_url)
   VALUES (?, ?, ?, ?, ?, ?, ?)
 `);
 const getByIdStmt = db.prepare('SELECT * FROM portfolios WHERE id = ?');
 
-// --- إعداد Multer للتخزين المحلي الدائم للصور ---
+// Multer
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, 'uploads/'),
   filename: (req, file, cb) => {
@@ -71,9 +67,14 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// --- Gemini ---
+// Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+// نقطة فحص المفتاح
+app.get('/check-key', (req, res) => {
+  res.json({ geminiKeyExists: !!process.env.GEMINI_API_KEY });
+});
 
 app.get('/', (req, res) => res.json({ message: 'API محلية مع SQLite + Gemini' }));
 
@@ -90,7 +91,6 @@ app.post('/api/generate-cv', upload.single('photo'), async (req, res) => {
     }
     const skillsArray = skills ? skills.split(',').map(s => s.trim()).filter(s => s) : [];
 
-    // --- تحسين المحتوى ---
     const prompt = `أنت مساعد محترف لكتابة السير الذاتية. أعد صياغة المعلومات التالية لجعلها أكثر احترافية وجاذبية ومتوافقة مع أنظمة ATS. ركز على الإنجازات والأثر.
 المعلومات الأصلية:
 - المهارات: ${JSON.stringify(skillsArray)}
@@ -105,14 +105,12 @@ app.post('/api/generate-cv', upload.single('photo'), async (req, res) => {
     text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     const enhancedData = JSON.parse(text);
 
-    // --- الصورة (محلية) ---
     let photoUrl = null;
     if (req.file) {
-      photoUrl = `/uploads/${req.file.filename}`; // المسار النسبي
+      photoUrl = `/uploads/${req.file.filename}`;
     }
 
-    // --- حفظ في SQLite ---
-    const id = uuidv4(); // توليد معرف فريد
+    const id = uuidv4();
     insertStmt.run(
       id,
       name,
@@ -134,21 +132,21 @@ app.post('/api/generate-cv', upload.single('photo'), async (req, res) => {
       templateId,
     };
 
-} catch (error) {
+    res.status(200).json({ success: true, data: finalData });
+  } catch (error) {
     console.error('❌ خطأ:', error);
     res.status(500).json({
       success: false,
       message: 'خطأ في الخادم',
-      details: error.message   // يُظهر سبب الخطأ للمطورين
+      details: error.message,
+      stack: process.env.NODE_ENV !== 'production' ? error.stack : undefined
     });
-}
+  }
 });
 
-// جلب سيرة محفوظة
 app.get('/api/portfolio/:id', (req, res) => {
   const row = getByIdStmt.get(req.params.id);
   if (!row) return res.status(404).json({ success: false, message: 'غير موجود' });
-  
   res.json({
     success: true,
     data: {
@@ -161,11 +159,6 @@ app.get('/api/portfolio/:id', (req, res) => {
     }
   });
 });
-// إنشاء مجلد uploads إذا لم يكن موجوداً
-const fs = require('fs');
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir);
-}
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 الخادم المحلي على ${PORT} مع SQLite`));
