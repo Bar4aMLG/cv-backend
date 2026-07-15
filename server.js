@@ -8,7 +8,16 @@ const Database = require('better-sqlite3');
 const { v4: uuidv4 } = require('uuid');
 
 dotenv.config();
+const fs = require('fs');
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir);
+}
 
+// إضافة نقطة فحص مؤقتة للمفتاح
+app.get('/check-key', (req, res) => {
+  res.json({ geminiKeyExists: !!process.env.GEMINI_API_KEY });
+});
 const app = express();
     const allowedOrigins = [
       'http://localhost:5173',                  // للتطوير المحلي
