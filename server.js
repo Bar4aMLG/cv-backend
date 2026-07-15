@@ -10,7 +10,22 @@ const { v4: uuidv4 } = require('uuid');
 dotenv.config();
 
 const app = express();
-app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
+    const allowedOrigins = [
+      'http://localhost:5173',                  // للتطوير المحلي
+      'https://bar4amlg.github.io',            // موقعك المنشور
+    ];
+
+    app.use(cors({
+      origin: function (origin, callback) {
+        // السماح للطلبات التي لا تحوي origin (مثل Postman) أو الموجود ضمن القائمة
+        if (!origin || allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          callback(new Error('Not allowed by CORS'));
+        }
+      },
+      credentials: true
+    }));
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
